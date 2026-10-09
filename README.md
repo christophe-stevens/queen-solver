@@ -14,6 +14,10 @@ This README is written to be pedagogical: each concept is explained the first ti
 
 ---
 
+https://github.com/user-attachments/assets/51bf720c-f101-477f-baa1-12b49121ad3c
+
+
+
 ## Contents
 
 1. [The puzzle](#1-the-puzzle)
