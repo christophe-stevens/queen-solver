@@ -1,27 +1,28 @@
-"""Small toolbox: snip a Queens puzzle off the screen, solve it, open the result."""
+"""Small toolbox: snip a Queens puzzle off the screen, then show the solution or play it."""
 import ctypes
 import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 TOOL = Path(__file__).resolve().parent
 ROOT = TOOL.parent
 sys.path.insert(0, str(TOOL))
 
-import tkinter as tk
-import torch
-from types import SimpleNamespace
-import numpy as np
-from PIL import ImageGrab, ImageTk
-from queens.zone_model import ZoneModel
-from queens.solvers import backtrack
-from queens.drawer import GridDrawer
-from PIL import Image
-from queens.colour_zones import zones_by_colour
-
-
 ctypes.windll.shcore.SetProcessDpiAwareness(2)  # use real pixels on scaled displays
+
+import tkinter as tk
+import numpy as np
+import pyautogui
+import torch
+from PIL import Image, ImageGrab, ImageTk
+from queens.colour_zones import zones_by_colour
+from queens.drawer import GridDrawer
+from queens.solvers import backtrack
+from queens.zone_model import ZoneModel
+
+pyautogui.PAUSE = 0.05  # small pause after each action
 
 OUT = ROOT / "output" / "captures"
 zone_model = ZoneModel().load(ROOT / "weights" / "zone_model_any_size.pt")
@@ -34,29 +35,32 @@ def solve(path):
         m = zone_model.detect_size_by_fit(x)[0]
     zones = zones_by_colour(Image.open(path), m)
     if zones is None:
-        return None, m
+        return None, m, None
     sols, tries = backtrack(zones)
     if not sols:
-        return None, m
+        return None, m, None
     queens = np.zeros((m, m), dtype=int)
     queens[np.arange(m), sols[0]] = 1
     out = path.with_name(path.stem + "_solved.png")
     GridDrawer(SimpleNamespace(m=m, zones=zones, queens=queens)).draw(show_queens=True).save(out)
-    return out, m
+    return out, m, sols[0]
+
 
 class Snipper:
-    """Small toolbox: select a screen area, solve it, open the result."""
+    """Select a screen area, then show the solution (Solve) or click it in (Play)."""
 
     def __init__(self, root):
         self.root = root
         root.title("Queens")
-        root.attributes("-topmost", True)  # stay above other windows
+        root.attributes("-toolwindow", True)  # stay above other windows
         root.resizable(False, False)
-        tk.Button(root, text="Select puzzle", width=16, command=self.start).pack(padx=10, pady=(10, 4))
+        tk.Button(root, text="Solve", width=16, command=lambda: self.start(False)).pack(padx=10, pady=(10, 4))
+        tk.Button(root, text="Play", width=16, command=lambda: self.start(True)).pack(padx=10, pady=4)
         self.status = tk.Label(root, text="Ready")
         self.status.pack(padx=10, pady=(0, 10))
 
-    def start(self):
+    def start(self, play):
+        self.play_mode = play
         self.root.withdraw()  # hide the toolbox so it's not in the screenshot
         self.root.update()
         time.sleep(0.2)
@@ -87,12 +91,30 @@ class Snipper:
             return  # too small: treat as a mis-click
         path = OUT / time.strftime("capture_%Y%m%d_%H%M%S.png")
         self.shot.crop(box).save(path)
-        out, m = solve(path)
+        out, m, cols = solve(path)
         if out is None:
             self.status.config(text=f"Read as {m}x{m}, but no solution: try a tighter selection")
             return
         self.status.config(text=f"Solved ({m}x{m})")
-        os.startfile(out)  # open with the default image viewer
+        if self.play_mode:
+            self.play(box, m, cols)
+        else:
+            os.startfile(out)  # open with the default image viewer
+
+    def play(self, box, m, cols):
+        # Click each queen cell twice: 1st click = X, 2nd = queen
+        self.root.withdraw()  # keep the toolbox off the grid
+        self.root.update()
+        w, h = (box[2] - box[0]) / m, (box[3] - box[1]) / m
+        user32 = ctypes.windll.user32
+        if not user32.BlockInput(True):  # freeze user input (needs admin)
+            self.status.config(text="Run as admin to lock the mouse")
+        try:
+            for r, c in enumerate(cols):
+                pyautogui.click(box[0] + (c + .5) * w, box[1] + (r + .5) * h, clicks=2, interval=0.02)
+        finally:
+            user32.BlockInput(False)  # always give the mouse back
+            self.root.deiconify()
 
     def finish(self):
         self.top.destroy()
